@@ -54,6 +54,7 @@ const DEFAULT_CPU_SETTINGS: LocalCpuSettings = {
 }
 const CPU_DIFFICULTY_OPTIONS: CpuDifficulty[] = ['easy', 'normal', 'hard', 'saikyo']
 const CPU_MOVE_DELAY_MS = 80
+const BUILD_STAMP = __BUILD_STAMP__
 
 const CONNECTION_LABEL: Record<'disconnected' | 'connecting' | 'open' | 'error', string> = {
   disconnected: '未接続',
@@ -661,7 +662,7 @@ function App() {
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <p className="eyebrow">Pure Browser Play</p>
+          <p className="eyebrow">{BUILD_STAMP}</p>
           <h1>Othello Showdown</h1>
           <p className="lede">ローカル or オンラインで即席オセロ対戦。キー共有と観戦にも対応しました。</p>
         </div>

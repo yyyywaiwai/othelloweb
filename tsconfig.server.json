@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "server-dist",
+    "moduleResolution": "node",
+    "rootDir": ".",
+    "composite": true,
+    "allowImportingTsExtensions": false
+  },
+  "include": ["server", "shared"]
+}

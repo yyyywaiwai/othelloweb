@@ -44,6 +44,7 @@ function App() {
   const [serverUrlInput, setServerUrlInput] = useState(DEFAULT_MATCH_SERVER_URL)
   const [serverUrlError, setServerUrlError] = useState<string | null>(null)
   const [serverSettingsCollapsed, setServerSettingsCollapsed] = useState(false)
+  const [onlinePanelCollapsed, setOnlinePanelCollapsed] = useState(false)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -320,18 +321,34 @@ function App() {
     !remoteState && !queueSearching && !waitingInfo && onlinePhase === 'idle'
 
   useEffect(() => {
-    if (!isOnlineMode || onlinePhase !== 'active') {
-      if (serverSettingsCollapsed) {
+    const previousPhase = previousPhaseRef.current
+    if (!isOnlineMode) {
+      setServerSettingsCollapsed(false)
+      setOnlinePanelCollapsed(false)
+    } else {
+      if (onlinePhase === 'active' && previousPhase !== 'active') {
+        setServerSettingsCollapsed(true)
+        setOnlinePanelCollapsed(true)
+      }
+
+      if (onlinePhase !== 'active' && serverSettingsCollapsed) {
         setServerSettingsCollapsed(false)
       }
-    } else if (previousPhaseRef.current !== 'active') {
-      setServerSettingsCollapsed(true)
+
+      if (onlinePhase !== 'active' && previousPhase === 'active') {
+        setOnlinePanelCollapsed(false)
+      }
     }
+
     previousPhaseRef.current = onlinePhase
   }, [isOnlineMode, onlinePhase, serverSettingsCollapsed])
 
   const toggleServerSettings = () => {
     setServerSettingsCollapsed((prev) => !prev)
+  }
+
+  const toggleOnlinePanel = () => {
+    setOnlinePanelCollapsed((prev) => !prev)
   }
 
   return (
@@ -381,11 +398,30 @@ function App() {
       </header>
 
       {isOnlineMode && (
-        <section className="online-panel">
-          <div className="online-topline">
+        <section className={`online-panel ${onlinePanelCollapsed ? 'collapsed' : ''}`}>
+          <div className="online-panel-head">
             <div>
-              <p className="label">接続状態</p>
-              <p className={`pill ${onlineConnectionState}`}>{connectionLabel}</p>
+              <p className="label">オンラインコントロール</p>
+              <p className="panel-summary">
+                {connectionLabel} / {phaseLabel} ・ {roleLabel} ・{' '}
+                {currentMatchKey || 'キー未発行'}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="panel-toggle"
+              onClick={toggleOnlinePanel}
+              aria-expanded={!onlinePanelCollapsed}
+            >
+              {onlinePanelCollapsed ? '開く' : '折りたたむ'}
+            </button>
+          </div>
+
+          <div className="online-panel-body">
+            <div className="online-topline">
+              <div>
+                <p className="label">接続状態</p>
+                <p className={`pill ${onlineConnectionState}`}>{connectionLabel}</p>
             </div>
             <div>
               <p className="label">モード</p>
@@ -476,12 +512,12 @@ function App() {
             </div>
           </form>
 
-          {promptSpectateKey && (
-            <div className="prompt-card">
-              <p>この部屋は満員です。観戦モードに切り替えますか？ (キー: {promptSpectateKey})</p>
-              <div className="action-grid">
-                <button type="button" className="btn btn-primary" onClick={acceptSpectatePrompt}>
-                  観戦する
+            {promptSpectateKey && (
+              <div className="prompt-card">
+                <p>この部屋は満員です。観戦モードに切り替えますか？ (キー: {promptSpectateKey})</p>
+                <div className="action-grid">
+                  <button type="button" className="btn btn-primary" onClick={acceptSpectatePrompt}>
+                    観戦する
                 </button>
                 <button type="button" className="btn btn-secondary" onClick={declineSpectatePrompt}>
                   やめておく
@@ -490,69 +526,70 @@ function App() {
             </div>
           )}
 
-          <div className="online-footer">
-            <div className={`server-settings ${serverSettingsCollapsed ? 'collapsed' : ''}`}>
-              <div className="server-settings-head">
-                <div>
-                  <p className="label">サーバー情報</p>
-                  <p className="server-summary">
-                    現在の接続先: <span className="inline-code">{resolvedServerUrl}</span>
-                  </p>
+            <div className="online-footer">
+              <div className={`server-settings ${serverSettingsCollapsed ? 'collapsed' : ''}`}>
+                <div className="server-settings-head">
+                  <div>
+                    <p className="label">サーバー情報</p>
+                    <p className="server-summary">
+                      現在の接続先: <span className="inline-code">{resolvedServerUrl}</span>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="server-settings-toggle"
+                    onClick={toggleServerSettings}
+                    aria-expanded={!serverSettingsCollapsed}
+                  >
+                    {serverSettingsCollapsed ? '開く' : '折りたたむ'}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  className="server-settings-toggle"
-                  onClick={toggleServerSettings}
-                  aria-expanded={!serverSettingsCollapsed}
-                >
-                  {serverSettingsCollapsed ? '開く' : '折りたたむ'}
-                </button>
-              </div>
 
-              {!serverSettingsCollapsed && (
-                <>
-                  <form className="server-url-form" onSubmit={handleServerUrlSubmit}>
-                    <label className="label" htmlFor="server-url-input">
-                      マッチングサーバー URL
-                    </label>
-                    <div className="server-url-row">
-                      <input
-                        id="server-url-input"
-                        className="server-url-input"
-                        value={serverUrlInput}
-                        onChange={handleServerUrlChange}
-                        placeholder="ws://example.com:8787"
-                        autoComplete="off"
-                      />
-                      <button type="submit" className="btn btn-primary">
-                        更新
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={handleServerUrlReset}
-                        disabled={
-                          serverUrl === DEFAULT_MATCH_SERVER_URL &&
-                          serverUrlInput === DEFAULT_MATCH_SERVER_URL
-                        }
-                      >
-                        既定値
+                {!serverSettingsCollapsed && (
+                  <>
+                    <form className="server-url-form" onSubmit={handleServerUrlSubmit}>
+                      <label className="label" htmlFor="server-url-input">
+                        マッチングサーバー URL
+                      </label>
+                      <div className="server-url-row">
+                        <input
+                          id="server-url-input"
+                          className="server-url-input"
+                          value={serverUrlInput}
+                          onChange={handleServerUrlChange}
+                          placeholder="ws://example.com:8787"
+                          autoComplete="off"
+                        />
+                        <button type="submit" className="btn btn-primary">
+                          更新
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={handleServerUrlReset}
+                          disabled={
+                            serverUrl === DEFAULT_MATCH_SERVER_URL &&
+                            serverUrlInput === DEFAULT_MATCH_SERVER_URL
+                          }
+                        >
+                          既定値
+                        </button>
+                      </div>
+                      <p className="helper-text">更新するとブラウザに保存されます。</p>
+                      {serverUrlError && <p className="error-text">{serverUrlError}</p>}
+                    </form>
+                    <div className="action-grid">
+                      <button type="button" className="btn btn-secondary" onClick={reconnect}>
+                        再接続を試す
                       </button>
                     </div>
-                    <p className="helper-text">更新するとブラウザに保存されます。</p>
-                    {serverUrlError && <p className="error-text">{serverUrlError}</p>}
-                  </form>
-                  <div className="action-grid">
-                    <button type="button" className="btn btn-secondary" onClick={reconnect}>
-                      再接続を試す
-                    </button>
-                  </div>
-                </>
-              )}
+                  </>
+                )}
+              </div>
             </div>
-          </div>
 
-          {onlineError && <p className="error-text">{onlineError}</p>}
+            {onlineError && <p className="error-text">{onlineError}</p>}
+          </div>
         </section>
       )}
 

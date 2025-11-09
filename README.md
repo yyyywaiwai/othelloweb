@@ -5,6 +5,7 @@ Vite + React + TypeScript で構築したシンプルなスタンドアロン版
 ## 主な特徴
 - 置けるマスのハイライト、手番スキップ、勝敗判定まで備えたフルルール実装
 - ローカル／オンライン対局の進行状況をブラウザに保存し、再読み込み後もそのまま再開
+- ローカル対戦は CPU と対局でき、やさしい〜さいきょうの 4 段階 + 先手/後手を UI から即切り替え
 - WebSocket サーバーを同梱し、ランダムマッチ／キー共有／観戦付きのオンライン対戦をサポート
 - Vite によるホットリロード開発／静的ファイル出力に対応
 
@@ -17,6 +18,11 @@ npm run dev
 
 ブラウザで `http://localhost:5173` (Viteの表示するURL) を開くと動作を確認できます。1台の端末を交互に使ってローカル対戦することを想定しています。
 
+## ローカルCPU対戦
+- ヘッダー下の「CPU対戦設定」で難易度（やさしい／ふつう／つよい／さいきょう）と先手番（黒/白）を選択できます。
+- 選択内容は `localStorage` に保持され、次回アクセス時も前回の設定で開始します。
+- 人間の手番では置けるマスが強調表示され、CPU手番は「CPUが思考中…」と表示されます。さいきょうは探索深さ6のネガマックス＋ヒューリスティクスで、つよいより慎重に角・安定石を重視します。
+
 ## スクリプト
 - `npm run dev` — フロントエンド開発サーバー (ホットリロード)
 - `npm run lint` — ESLint 実行
@@ -26,6 +32,7 @@ npm run dev
 - `npm run server:build` — サーバーコードを `server-dist/` にトランスパイル
 - `npm run server:start` — ビルド済みサーバーの常駐起動（`--experimental-specifier-resolution=node` 付きで ES Modules の拡張子を補完）
 - `npm run integrated` — `build` でクライアント/サーバー双方を本番ビルドし、`server:start` と `npm start` (4173番ポートでの Vite preview) を同時起動
+- `npx esbuild scripts/cpuBench.ts --bundle --platform=node --format=esm --outfile=.cpu-bench.mjs && CPU_BENCH_GAMES=4 CPU_BENCH_RANDOM_PLIES=0 node .cpu-bench.mjs` — CPU 難易度同士を自動対局させるベンチマーク。`CPU_BENCH_GAMES` で局数、`CPU_BENCH_RANDOM_PLIES` で序盤のランダム手数を指定できます（結果ログ後 `.cpu-bench.mjs` は不要なら削除してください）。
 
 ## オンライン対戦の起動手順
 1. 依存関係をインストールし、`npm run server` で WebSocket サーバーを立ち上げます。デフォルトではポート `8787` で待ち受けます。

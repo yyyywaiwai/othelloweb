@@ -25,7 +25,7 @@ npm run dev
 - `npm run server` — `ws://localhost:8787` でオンラインマッチングサーバーを起動 (tsx 実行)
 - `npm run server:build` — サーバーコードを `server-dist/` にトランスパイル
 - `npm run server:start` — ビルド済みサーバーの常駐起動（`--experimental-specifier-resolution=node` 付きで ES Modules の拡張子を補完）
-- `npm run integrated` — `server:build` でバックエンドを本番ビルドした後、`server:start` (本番 Node 実行) と Vite 開発サーバーを同時起動
+- `npm run integrated` — `build` でクライアント/サーバー双方を本番ビルドし、`server:start` と `npm start` (4173番ポートでの Vite preview) を同時起動
 
 ## オンライン対戦の起動手順
 1. 依存関係をインストールし、`npm run server` で WebSocket サーバーを立ち上げます。デフォルトではポート `8787` で待ち受けます。

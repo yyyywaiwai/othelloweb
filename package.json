@@ -12,7 +12,7 @@
     "server": "tsx server/index.ts",
     "server:build": "tsc -b tsconfig.server.json",
     "server:start": "node --experimental-specifier-resolution=node server-dist/server/index.js",
-    "integrated": "npm run server:build && concurrently -k -n server,client \"npm:server:start\" \"npm:dev\""
+    "integrated": "npm run build && concurrently -k -n server,client \"npm:server:start\" \"npm:start\""
   },
   "dependencies": {
     "react": "^19.1.1",

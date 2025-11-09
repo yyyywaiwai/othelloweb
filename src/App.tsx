@@ -1,5 +1,5 @@
 import type { ChangeEvent, FormEvent } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
   applyMove,
@@ -38,10 +38,12 @@ function App() {
   const [lastMove, setLastMove] = useState<number | null>(null)
   const [statusMessage, setStatusMessage] = useState('Black to move first.')
   const [mode, setMode] = useState<GameMode>('local')
+  const isOnlineMode = mode === 'online'
   const [matchKeyInput, setMatchKeyInput] = useState('')
   const [serverUrl, setServerUrl] = useState(DEFAULT_MATCH_SERVER_URL)
   const [serverUrlInput, setServerUrlInput] = useState(DEFAULT_MATCH_SERVER_URL)
   const [serverUrlError, setServerUrlError] = useState<string | null>(null)
+  const [serverSettingsCollapsed, setServerSettingsCollapsed] = useState(false)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -52,7 +54,7 @@ function App() {
     }
   }, [])
 
-  const online = useOnlineMatch({ enabled: mode === 'online', serverUrl })
+  const online = useOnlineMatch({ enabled: isOnlineMode, serverUrl })
   const {
     connectionState: onlineConnectionState,
     phase: onlinePhase,
@@ -75,6 +77,7 @@ function App() {
     reconnect,
     serverUrl: resolvedServerUrl,
   } = online
+  const previousPhaseRef = useRef(onlinePhase)
 
   const validMoves = useMemo<MoveMap>(
     () => computeValidMoves(board, currentDisk),
@@ -147,7 +150,6 @@ function App() {
 
   const defaultOnlineBoard = useMemo(() => createInitialBoard(), [])
   const defaultOnlineScores = useMemo(() => countDisks(defaultOnlineBoard), [defaultOnlineBoard])
-  const isOnlineMode = mode === 'online'
 
   const connectionHint = useMemo(() => {
     switch (onlineConnectionState) {
@@ -225,6 +227,19 @@ function App() {
     return '未参加'
   })()
 
+  const showFriendlyTurnCopy =
+    isOnlineMode && !!remoteState && onlineRole === 'player' && !!onlineDisk
+  const friendlyDiskLabel =
+    showFriendlyTurnCopy && remoteState ? DISK_LABEL[remoteState.currentDisk] : null
+  const turnChipText =
+    showFriendlyTurnCopy && remoteState
+      ? remoteState.currentDisk === onlineDisk
+        ? 'あなたの番です'
+        : '相手の番です'
+      : DISK_LABEL[effectiveCurrentDisk]
+  const turnChipNote =
+    showFriendlyTurnCopy && friendlyDiskLabel ? `(${friendlyDiskLabel})` : null
+
   const canPlayOnline =
     isOnlineMode &&
     !!remoteState &&
@@ -283,6 +298,7 @@ function App() {
     const trimmed = serverUrlInput.trim()
     if (!/^wss?:\/\//i.test(trimmed)) {
       setServerUrlError('ws:// または wss:// で始まる URL を入力してください。')
+      setServerSettingsCollapsed(false)
       return
     }
     setServerUrlError(null)
@@ -302,6 +318,21 @@ function App() {
 
   const leaveButtonDisabled =
     !remoteState && !queueSearching && !waitingInfo && onlinePhase === 'idle'
+
+  useEffect(() => {
+    if (!isOnlineMode || onlinePhase !== 'active') {
+      if (serverSettingsCollapsed) {
+        setServerSettingsCollapsed(false)
+      }
+    } else if (previousPhaseRef.current !== 'active') {
+      setServerSettingsCollapsed(true)
+    }
+    previousPhaseRef.current = onlinePhase
+  }, [isOnlineMode, onlinePhase, serverSettingsCollapsed])
+
+  const toggleServerSettings = () => {
+    setServerSettingsCollapsed((prev) => !prev)
+  }
 
   return (
     <main className="app-shell">
@@ -460,40 +491,64 @@ function App() {
           )}
 
           <div className="online-footer">
-            <form className="server-url-form" onSubmit={handleServerUrlSubmit}>
-              <label className="label" htmlFor="server-url-input">
-                マッチングサーバー URL
-              </label>
-              <div className="server-url-row">
-                <input
-                  id="server-url-input"
-                  className="server-url-input"
-                  value={serverUrlInput}
-                  onChange={handleServerUrlChange}
-                  placeholder="ws://example.com:8787"
-                  autoComplete="off"
-                />
-                <button type="submit" className="btn btn-primary">
-                  更新
-                </button>
+            <div className={`server-settings ${serverSettingsCollapsed ? 'collapsed' : ''}`}>
+              <div className="server-settings-head">
+                <div>
+                  <p className="label">サーバー情報</p>
+                  <p className="server-summary">
+                    現在の接続先: <span className="inline-code">{resolvedServerUrl}</span>
+                  </p>
+                </div>
                 <button
                   type="button"
-                  className="btn btn-secondary"
-                  onClick={handleServerUrlReset}
-                  disabled={serverUrl === DEFAULT_MATCH_SERVER_URL && serverUrlInput === DEFAULT_MATCH_SERVER_URL}
+                  className="server-settings-toggle"
+                  onClick={toggleServerSettings}
+                  aria-expanded={!serverSettingsCollapsed}
                 >
-                  既定値
+                  {serverSettingsCollapsed ? '開く' : '折りたたむ'}
                 </button>
               </div>
-              <p className="helper-text">
-                現在の接続先: <span className="inline-code">{resolvedServerUrl}</span>
-              </p>
-              {serverUrlError && <p className="error-text">{serverUrlError}</p>}
-            </form>
-            <div className="action-grid">
-              <button type="button" className="btn btn-secondary" onClick={reconnect}>
-                再接続を試す
-              </button>
+
+              {!serverSettingsCollapsed && (
+                <>
+                  <form className="server-url-form" onSubmit={handleServerUrlSubmit}>
+                    <label className="label" htmlFor="server-url-input">
+                      マッチングサーバー URL
+                    </label>
+                    <div className="server-url-row">
+                      <input
+                        id="server-url-input"
+                        className="server-url-input"
+                        value={serverUrlInput}
+                        onChange={handleServerUrlChange}
+                        placeholder="ws://example.com:8787"
+                        autoComplete="off"
+                      />
+                      <button type="submit" className="btn btn-primary">
+                        更新
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={handleServerUrlReset}
+                        disabled={
+                          serverUrl === DEFAULT_MATCH_SERVER_URL &&
+                          serverUrlInput === DEFAULT_MATCH_SERVER_URL
+                        }
+                      >
+                        既定値
+                      </button>
+                    </div>
+                    <p className="helper-text">更新するとブラウザに保存されます。</p>
+                    {serverUrlError && <p className="error-text">{serverUrlError}</p>}
+                  </form>
+                  <div className="action-grid">
+                    <button type="button" className="btn btn-secondary" onClick={reconnect}>
+                      再接続を試す
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -504,9 +559,10 @@ function App() {
       <div className="play-area">
         <section className="status-panel">
           <div className="turn-card">
-            <p className="label">Current turn</p>
+            <p className="label">現在のターン</p>
             <p className={`turn-chip ${effectiveCurrentDisk === 'B' ? 'black' : 'white'}`}>
-              {DISK_LABEL[effectiveCurrentDisk]}
+              <span>{turnChipText}</span>
+              {turnChipNote && <span className="turn-chip-note">{turnChipNote}</span>}
             </p>
           </div>
 

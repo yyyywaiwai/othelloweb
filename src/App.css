@@ -529,6 +529,14 @@
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
+}
+
+.valid-dot.black {
+  background: rgba(13, 13, 13, 0.9);
+  box-shadow: 0 0 6px rgba(13, 13, 13, 0.8);
+}
+
+.valid-dot.white {
   background: rgba(255, 255, 255, 0.9);
   box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
 }

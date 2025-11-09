@@ -16,6 +16,7 @@ import useOnlineMatch, {
   DEFAULT_MATCH_SERVER_URL,
   type RemoteState,
 } from './hooks/useOnlineMatch'
+import useMatchAudioCues from './hooks/useMatchAudioCues'
 
 const BOARD_INDICES = Array.from({ length: 64 }, (_, index) => index)
 type GameMode = 'local' | 'online'
@@ -187,7 +188,9 @@ function App() {
     reconnect,
     serverUrl: resolvedServerUrl,
   } = online
+  const { playMatchReadySound, playYourTurnSound } = useMatchAudioCues()
   const previousPhaseRef = useRef(onlinePhase)
+  const previousTurnDiskRef = useRef<Disk | null>(null)
 
   const validMoves = useMemo<MoveMap>(
     () => computeValidMoves(board, currentDisk),
@@ -337,14 +340,17 @@ function App() {
   const turnChipNote =
     showFriendlyTurnCopy && friendlyDiskLabel ? `(${friendlyDiskLabel})` : null
   const turnCountdownLabel = isOnlineMode ? formatCountdown(turnCountdownMs) : null
+  const hasRemoteState = Boolean(remoteState)
+  const remoteCurrentDisk = remoteState?.currentDisk ?? null
+  const remoteHasWinner = Boolean(remoteState?.winner)
 
   const canPlayOnline =
     isOnlineMode &&
-    !!remoteState &&
+    hasRemoteState &&
     onlineRole === 'player' &&
     !!onlineDisk &&
-    onlineDisk === remoteState.currentDisk &&
-    !remoteState.winner &&
+    onlineDisk === remoteCurrentDisk &&
+    !remoteHasWinner &&
     onlineConnectionState === 'open'
 
   const handleCellClick = useCallback(
@@ -426,6 +432,7 @@ function App() {
       if (onlinePhase === 'active' && previousPhase !== 'active') {
         setServerSettingsCollapsed(true)
         setOnlinePanelCollapsed(true)
+        playMatchReadySound()
       }
 
       if (onlinePhase !== 'active' && serverSettingsCollapsed) {
@@ -438,7 +445,31 @@ function App() {
     }
 
     previousPhaseRef.current = onlinePhase
-  }, [isOnlineMode, onlinePhase, serverSettingsCollapsed])
+  }, [isOnlineMode, onlinePhase, playMatchReadySound, serverSettingsCollapsed])
+
+  useEffect(() => {
+    if (
+      isOnlineMode &&
+      hasRemoteState &&
+      onlineRole === 'player' &&
+      onlineDisk &&
+      !remoteHasWinner &&
+      remoteCurrentDisk === onlineDisk &&
+      previousTurnDiskRef.current !== remoteCurrentDisk
+    ) {
+      playYourTurnSound()
+    }
+
+    previousTurnDiskRef.current = remoteCurrentDisk
+  }, [
+    hasRemoteState,
+    isOnlineMode,
+    onlineRole,
+    onlineDisk,
+    playYourTurnSound,
+    remoteCurrentDisk,
+    remoteHasWinner,
+  ])
 
   const toggleServerSettings = () => {
     setServerSettingsCollapsed((prev) => !prev)
@@ -798,7 +829,7 @@ function App() {
                   disabled={disableCell}
                 >
                   {cell && <span className="disc" aria-hidden />}
-                  {!cell && isValid && !effectiveGameOver && <span className="valid-dot" />}
+                  {!cell && isValid && !effectiveGameOver && <span className={`valid-dot ${effectiveCurrentDisk === 'B' ? 'black' : 'white'}`} />}
                 </button>
               )
             })}

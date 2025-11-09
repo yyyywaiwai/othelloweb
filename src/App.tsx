@@ -687,7 +687,7 @@ function App() {
           </div>
 
           {mode === 'local' ? (
-            <button className="ghost" type="button" onClick={resetGame}>
+            <button className="ghost" type="button" onClick={() => resetGame()}>
               ローカル局をリセット
             </button>
           ) : (

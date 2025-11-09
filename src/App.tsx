@@ -199,23 +199,9 @@ function App() {
     return validMoves
   }, [defaultOnlineMoves, isOnlineMode, remoteState, remoteValidMoves, validMoves])
 
-  const displayOccupiedCells = useMemo(
-    () => effectiveBoard.reduce((total, cell) => (cell ? total + 1 : total), 0),
-    [effectiveBoard],
-  )
-  const displayMovesPlayed = Math.max(0, displayOccupiedCells - 4)
-  const displayRemainingCells = BOARD_INDICES.length - displayOccupiedCells
-  const displayNetAdvantage = effectiveScores.B - effectiveScores.W
-  const displayAdvantageLabel =
-    displayNetAdvantage === 0
-      ? 'Level'
-      : `${DISK_LABEL[displayNetAdvantage > 0 ? 'B' : 'W']} +${Math.abs(displayNetAdvantage)}`
-
   const displayInsightNote = isOnlineMode
     ? remoteState?.statusMessage ?? connectionHint
     : insightMessage
-
-  const spectatorCount = remoteState?.spectators ?? 0
   const currentMatchKey = remoteState?.matchKey ?? waitingInfo?.matchKey ?? ''
   const connectionLabel = CONNECTION_LABEL[onlineConnectionState]
   const phaseLabel = PHASE_LABEL[onlinePhase]
@@ -614,30 +600,7 @@ function App() {
             </div>
           </div>
 
-          <div className="insight-card">
-            <p className="label">Match insights</p>
-            <ul className="insight-grid">
-              <li className="insight-item">
-                <span className="insight-key">Moves played</span>
-                <span className="insight-value">{displayMovesPlayed}</span>
-              </li>
-              <li className="insight-item">
-                <span className="insight-key">Remaining squares</span>
-                <span className="insight-value">{displayRemainingCells}</span>
-              </li>
-              <li className="insight-item">
-                <span className="insight-key">Advantage</span>
-                <span className="insight-value">{displayAdvantageLabel}</span>
-              </li>
-              {isOnlineMode && (
-                <li className="insight-item">
-                  <span className="insight-key">観戦者</span>
-                  <span className="insight-value">{spectatorCount}</span>
-                </li>
-              )}
-            </ul>
-            <p className="insight-note">{displayInsightNote}</p>
-          </div>
+          <p className="status-note">{displayInsightNote}</p>
         </section>
 
         <section className="board-wrapper">

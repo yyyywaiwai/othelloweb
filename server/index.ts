@@ -30,6 +30,7 @@ interface RoomState {
   statusMessage: string
   createdAt: number
   winner: WinnerFlag
+  turnDeadline: number | null
 }
 
 interface ClientMeta {
@@ -39,6 +40,7 @@ interface ClientMeta {
   roomKey: string | null
   role: ClientRole
   disk: Disk | null
+  disconnectTimer: NodeJS.Timeout | null
 }
 
 interface MessagePayload {
@@ -55,9 +57,12 @@ interface MatchStatePayload {
   spectators: number
   statusMessage: string
   winner: WinnerFlag
+  turnDeadline: number | null
 }
 
 const PORT = Number(process.env.MATCH_SERVER_PORT ?? process.env.PORT ?? 8787)
+const TURN_TIMEOUT_MS = Number(process.env.MATCH_TURN_TIMEOUT_MS ?? 180000)
+const DISCONNECT_GRACE_MS = Number(process.env.MATCH_DISCONNECT_GRACE_MS ?? 15000)
 
 const httpServer = createServer()
 const wss = new WebSocketServer({ server: httpServer })
@@ -84,6 +89,7 @@ const toStatePayload = (room: RoomState): MatchStatePayload => ({
   spectators: room.spectators.size,
   statusMessage: room.statusMessage,
   winner: room.winner,
+  turnDeadline: room.turnDeadline,
 })
 
 const send = (socket: WebSocket, type: string, payload: Record<string, unknown> = {}) => {
@@ -138,8 +144,61 @@ const releaseRoomOccupants = (room: RoomState) => {
   room.spectators.clear()
 }
 
+const refreshTurnDeadline = (room: RoomState) => {
+  if (room.status === 'playing') {
+    room.turnDeadline = Date.now() + TURN_TIMEOUT_MS
+  } else {
+    room.turnDeadline = null
+  }
+}
+
+const rehydrateSession = (meta: ClientMeta) => {
+  if (!meta.socket || meta.socket.readyState !== WebSocket.OPEN) return
+
+  if (meta.status === 'queue') {
+    send(meta.socket, 'queue:status', { searching: true })
+    return
+  }
+
+  if (meta.status === 'waiting' && meta.roomKey && meta.disk) {
+    send(meta.socket, 'match:waiting', { matchKey: meta.roomKey, yourDisk: meta.disk })
+    return
+  }
+
+  if (!meta.roomKey) return
+  const room = rooms.get(meta.roomKey)
+  if (!room) {
+    meta.status = 'idle'
+    meta.role = null
+    meta.disk = null
+    meta.roomKey = null
+    return
+  }
+
+  const state = toStatePayload(room)
+  send(meta.socket, 'match:start', {
+    youAre: meta.role === 'spectator' ? 'spectator' : 'player',
+    yourDisk: meta.disk,
+    matchKey: room.key,
+    state,
+  })
+}
+
+const handleTimeout = (room: RoomState) => {
+  if (room.status !== 'playing' || !room.turnDeadline) return
+  const loser = room.currentDisk
+  const winner = nextDisk(loser)
+  room.status = 'finished'
+  room.winner = winner
+  room.statusMessage = winner
+    ? `${DISK_LABEL[winner]} wins by timeout.`
+    : 'Match ended by timeout.'
+  cleanupRoom(room, 'timeout')
+}
+
 const deriveStatusMessage = (room: RoomState) => {
   if (room.status === 'finished') {
+    room.turnDeadline = null
     if (room.winner === 'draw') {
       room.statusMessage = 'Game over — it\'s a draw.'
     } else if (room.winner) {
@@ -168,6 +227,7 @@ const deriveStatusMessage = (room: RoomState) => {
       room.winner = scores.B > scores.W ? 'B' : 'W'
       room.statusMessage = `${DISK_LABEL[room.winner]} controls the board ${scores.B}-${scores.W}.`
     }
+    room.turnDeadline = null
     return
   }
 
@@ -192,6 +252,7 @@ const createRoom = (): RoomState => ({
   statusMessage: 'Waiting for opponent.',
   createdAt: Date.now(),
   winner: null,
+  turnDeadline: null,
 })
 
 const startRoom = (room: RoomState) => {
@@ -201,6 +262,7 @@ const startRoom = (room: RoomState) => {
   room.status = 'playing'
   room.statusMessage = 'Black to move first.'
   room.winner = null
+  refreshTurnDeadline(room)
 }
 
 const assignPlayer = (room: RoomState, clientId: string, diskPreference?: Disk) => {
@@ -215,9 +277,10 @@ const assignPlayer = (room: RoomState, clientId: string, diskPreference?: Disk) 
   return openSlot
 }
 
-const cleanupRoom = (room: RoomState) => {
+const cleanupRoom = (room: RoomState, reason = 'completed') => {
+  room.turnDeadline = null
   const state = toStatePayload(room)
-  broadcastRoom(room, 'match:end', { reason: 'completed', state })
+  broadcastRoom(room, 'match:end', { reason, state })
   releaseRoomOccupants(room)
   rooms.delete(room.key)
 }
@@ -243,6 +306,7 @@ const handleMove = (meta: ClientMeta, index: number) => {
   room.currentDisk = nextDisk(room.currentDisk)
   ensureRoomTurn(room)
   roomStatus = room.status
+  refreshTurnDeadline(room)
 
   const state = toStatePayload(room)
   broadcastRoom(room, 'match:update', { state })
@@ -326,6 +390,7 @@ const handleKeyJoin = (meta: ClientMeta, key: string) => {
     }
   } else {
     room.statusMessage = 'Waiting for opponent to join via key.'
+    room.turnDeadline = null
     send(meta.socket, 'match:waiting', { matchKey: key, yourDisk: disk })
   }
 }
@@ -431,14 +496,10 @@ const handleLeave = (meta: ClientMeta) => {
     room.status = 'finished'
     room.winner = disk ? nextDisk(disk) : null
     room.statusMessage = 'Opponent left the match.'
-    const state = toStatePayload(room)
-    broadcastRoom(room, 'match:end', { reason: 'opponent-left', state })
-    releaseRoomOccupants(room)
-    rooms.delete(room.key)
+    cleanupRoom(room, 'opponent-left')
   } else {
-    broadcastRoom(room, 'match:end', { reason: 'host-left' })
-    releaseRoomOccupants(room)
-    rooms.delete(room.key)
+    room.statusMessage = 'Host left the lobby.'
+    cleanupRoom(room, 'host-left')
   }
 
   meta.status = 'idle'
@@ -447,21 +508,43 @@ const handleLeave = (meta: ClientMeta) => {
   meta.disk = null
 }
 
-wss.on('connection', (socket) => {
-  const clientId = randomUUID()
-  const meta: ClientMeta = {
-    id: clientId,
-    socket,
-    status: 'idle',
-    roomKey: null,
-    role: null,
-    disk: null,
+wss.on('connection', (socket, request) => {
+  const url = new URL(request.url ?? '/', 'http://localhost')
+  const requestedId = url.searchParams.get('clientId')
+  let meta: ClientMeta | undefined =
+    requestedId && clientsById.has(requestedId) ? clientsById.get(requestedId) ?? undefined : undefined
+
+  if (meta) {
+    if (meta.socket && meta.socket !== socket) {
+      try {
+        meta.socket.terminate()
+      } catch (error) {
+        console.warn('Failed to terminate previous socket', error)
+      }
+    }
+    meta.socket = socket
+    if (meta.disconnectTimer) {
+      clearTimeout(meta.disconnectTimer)
+      meta.disconnectTimer = null
+    }
+  } else {
+    const clientId = randomUUID()
+    meta = {
+      id: clientId,
+      socket,
+      status: 'idle',
+      roomKey: null,
+      role: null,
+      disk: null,
+      disconnectTimer: null,
+    }
+    clientsById.set(clientId, meta)
   }
 
   clientsBySocket.set(socket, meta)
-  clientsById.set(clientId, meta)
 
-  send(socket, 'hello', { clientId, message: 'Connected to Othello match server.' })
+  send(socket, 'hello', { clientId: meta.id, message: 'Connected to Othello match server.' })
+  rehydrateSession(meta)
 
   socket.on('message', (raw) => {
     try {
@@ -527,11 +610,29 @@ wss.on('connection', (socket) => {
   })
 
   socket.on('close', () => {
-    handleLeave(meta)
     clientsBySocket.delete(socket)
-    clientsById.delete(meta.id)
+    if (meta?.disconnectTimer) {
+      return
+    }
+    meta.disconnectTimer = setTimeout(() => {
+      meta.disconnectTimer = null
+      handleLeave(meta)
+      clientsById.delete(meta.id)
+    }, DISCONNECT_GRACE_MS)
   })
 })
+
+const timeoutSweepInterval = Math.min(5000, Math.max(1000, Math.floor(TURN_TIMEOUT_MS / 6)))
+setInterval(() => {
+  const now = Date.now()
+  const expiredRooms: RoomState[] = []
+  for (const room of rooms.values()) {
+    if (room.status === 'playing' && room.turnDeadline && room.turnDeadline <= now) {
+      expiredRooms.push(room)
+    }
+  }
+  expiredRooms.forEach((room) => handleTimeout(room))
+}, timeoutSweepInterval)
 
 httpServer.listen(PORT, () => {
   console.log(`Matchmaking server listening on port ${PORT}`)

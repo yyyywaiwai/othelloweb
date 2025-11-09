@@ -12,10 +12,30 @@ import {
   type Disk,
   type MoveMap,
 } from './lib/othello'
-import useOnlineMatch, { DEFAULT_MATCH_SERVER_URL } from './hooks/useOnlineMatch'
+import useOnlineMatch, {
+  DEFAULT_MATCH_SERVER_URL,
+  type RemoteState,
+} from './hooks/useOnlineMatch'
 
 const BOARD_INDICES = Array.from({ length: 64 }, (_, index) => index)
 type GameMode = 'local' | 'online'
+type StoredLocalGame = {
+  board: Cell[]
+  currentDisk: Disk
+  lastMove: number | null
+  statusMessage: string
+  timestamp: number
+}
+type StoredRemoteSnapshot = (RemoteState & { timestamp: number })
+interface InitialSnapshots {
+  mode: GameMode
+  localGame: StoredLocalGame | null
+  remoteState: StoredRemoteSnapshot | null
+}
+
+const LOCAL_GAME_STORAGE_KEY = 'othello:local-game'
+const LAST_MODE_STORAGE_KEY = 'othello:last-mode'
+const REMOTE_STATE_STORAGE_KEY = 'othello:last-remote-state'
 
 const CONNECTION_LABEL: Record<'disconnected' | 'connecting' | 'open' | 'error', string> = {
   disconnected: '未接続',
@@ -32,12 +52,99 @@ const PHASE_LABEL: Record<'idle' | 'queue' | 'waiting' | 'active' | 'spectating'
   spectating: '観戦中',
 }
 
+const isDisk = (value: unknown): value is Disk => value === 'B' || value === 'W'
+
+const valueIsCell = (value: unknown): value is Cell =>
+  value === null || value === 'B' || value === 'W'
+
+const isValidBoard = (value: unknown): value is Cell[] =>
+  Array.isArray(value) &&
+  value.length === BOARD_INDICES.length &&
+  value.every((cell) => valueIsCell(cell))
+
+const parseLocalGameSnapshot = (raw: string | null): StoredLocalGame | null => {
+  if (!raw) return null
+  try {
+    const data = JSON.parse(raw) as Partial<StoredLocalGame>
+    if (!isValidBoard(data.board) || !isDisk(data.currentDisk)) return null
+    const lastMove = typeof data.lastMove === 'number' ? data.lastMove : null
+    const statusMessage =
+      typeof data.statusMessage === 'string' ? data.statusMessage : 'Black to move first.'
+    return {
+      board: data.board,
+      currentDisk: data.currentDisk,
+      lastMove,
+      statusMessage,
+      timestamp: typeof data.timestamp === 'number' ? data.timestamp : Date.now(),
+    }
+  } catch {
+    return null
+  }
+}
+
+const parseRemoteSnapshot = (raw: string | null): StoredRemoteSnapshot | null => {
+  if (!raw) return null
+  try {
+    const data = JSON.parse(raw) as Partial<RemoteState> & { timestamp?: number }
+    if (!isValidBoard(data.board) || !isDisk(data.currentDisk) || typeof data.matchKey !== 'string') {
+      return null
+    }
+    return {
+      matchKey: data.matchKey,
+      board: data.board,
+      currentDisk: data.currentDisk,
+      lastMove: typeof data.lastMove === 'number' ? data.lastMove : null,
+      scores: data.scores ?? countDisks(data.board),
+      spectators: typeof data.spectators === 'number' ? data.spectators : 0,
+      statusMessage:
+        typeof data.statusMessage === 'string' ? data.statusMessage : 'Reconnecting…',
+      winner: (data.winner ?? null) as RemoteState['winner'],
+      turnDeadline: typeof data.turnDeadline === 'number' ? data.turnDeadline : null,
+      timestamp: typeof data.timestamp === 'number' ? data.timestamp : Date.now(),
+    }
+  } catch {
+    return null
+  }
+}
+
+const loadInitialSnapshots = (): InitialSnapshots => {
+  if (typeof window === 'undefined') {
+    return { mode: 'local', localGame: null, remoteState: null }
+  }
+  const storedMode = window.localStorage.getItem(LAST_MODE_STORAGE_KEY)
+  const mode: GameMode = storedMode === 'online' ? 'online' : 'local'
+  const localGame = parseLocalGameSnapshot(window.localStorage.getItem(LOCAL_GAME_STORAGE_KEY))
+  const remoteState = parseRemoteSnapshot(window.localStorage.getItem(REMOTE_STATE_STORAGE_KEY))
+  return { mode, localGame, remoteState }
+}
+
+const formatCountdown = (ms: number | null) => {
+  if (ms === null) return null
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
+
 function App() {
-  const [board, setBoard] = useState<Cell[]>(() => createInitialBoard())
-  const [currentDisk, setCurrentDisk] = useState<Disk>('B')
-  const [lastMove, setLastMove] = useState<number | null>(null)
-  const [statusMessage, setStatusMessage] = useState('Black to move first.')
-  const [mode, setMode] = useState<GameMode>('local')
+  const initialSnapshotsRef = useRef<InitialSnapshots | null>(null)
+  if (initialSnapshotsRef.current === null) {
+    initialSnapshotsRef.current = loadInitialSnapshots()
+  }
+  const initialSnapshots = initialSnapshotsRef.current as InitialSnapshots
+  const [board, setBoard] = useState<Cell[]>(
+    () => initialSnapshots?.localGame?.board ?? createInitialBoard(),
+  )
+  const [currentDisk, setCurrentDisk] = useState<Disk>(
+    () => initialSnapshots?.localGame?.currentDisk ?? 'B',
+  )
+  const [lastMove, setLastMove] = useState<number | null>(
+    () => initialSnapshots?.localGame?.lastMove ?? null,
+  )
+  const [statusMessage, setStatusMessage] = useState(
+    () => initialSnapshots?.localGame?.statusMessage ?? 'Black to move first.',
+  )
+  const [mode, setMode] = useState<GameMode>(initialSnapshots?.mode ?? 'local')
   const isOnlineMode = mode === 'online'
   const [matchKeyInput, setMatchKeyInput] = useState('')
   const [serverUrl, setServerUrl] = useState(DEFAULT_MATCH_SERVER_URL)
@@ -45,6 +152,8 @@ function App() {
   const [serverUrlError, setServerUrlError] = useState<string | null>(null)
   const [serverSettingsCollapsed, setServerSettingsCollapsed] = useState(false)
   const [onlinePanelCollapsed, setOnlinePanelCollapsed] = useState(false)
+  const fallbackTurnDeadline = initialSnapshots.remoteState?.turnDeadline ?? null
+  const [turnCountdownMs, setTurnCountdownMs] = useState<number | null>(null)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -149,7 +258,10 @@ function App() {
     setStatusMessage(`${DISK_LABEL[currentDisk]} to move.`)
   }, [currentDisk, isGameOver, scores, validMoves])
 
-  const defaultOnlineBoard = useMemo(() => createInitialBoard(), [])
+  const defaultOnlineBoard = useMemo(
+    () => initialSnapshots.remoteState?.board ?? createInitialBoard(),
+    [initialSnapshots],
+  )
   const defaultOnlineScores = useMemo(() => countDisks(defaultOnlineBoard), [defaultOnlineBoard])
 
   const connectionHint = useMemo(() => {
@@ -164,6 +276,7 @@ function App() {
         return '接続待機中です。オンラインパネルで試合を開始してください。'
     }
   }, [onlineConnectionState])
+  const fallbackOnlineStatus = initialSnapshots.remoteState?.statusMessage ?? connectionHint
 
   const effectiveBoard = isOnlineMode
     ? remoteState?.board ?? defaultOnlineBoard
@@ -177,9 +290,6 @@ function App() {
   const effectiveLastMove = isOnlineMode
     ? remoteState?.lastMove ?? null
     : lastMove
-  const effectiveStatusMessage = isOnlineMode
-    ? remoteState?.statusMessage ?? connectionHint
-    : statusMessage
   const effectiveGameOver = isOnlineMode ? Boolean(remoteState?.winner) : isGameOver
 
   const remoteValidMoves = useMemo<MoveMap>(() => {
@@ -200,7 +310,7 @@ function App() {
   }, [defaultOnlineMoves, isOnlineMode, remoteState, remoteValidMoves, validMoves])
 
   const displayInsightNote = isOnlineMode
-    ? remoteState?.statusMessage ?? connectionHint
+    ? remoteState?.statusMessage ?? fallbackOnlineStatus
     : insightMessage
   const currentMatchKey = remoteState?.matchKey ?? waitingInfo?.matchKey ?? ''
   const connectionLabel = CONNECTION_LABEL[onlineConnectionState]
@@ -226,6 +336,7 @@ function App() {
       : DISK_LABEL[effectiveCurrentDisk]
   const turnChipNote =
     showFriendlyTurnCopy && friendlyDiskLabel ? `(${friendlyDiskLabel})` : null
+  const turnCountdownLabel = isOnlineMode ? formatCountdown(turnCountdownMs) : null
 
   const canPlayOnline =
     isOnlineMode &&
@@ -336,6 +447,51 @@ function App() {
   const toggleOnlinePanel = () => {
     setOnlinePanelCollapsed((prev) => !prev)
   }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(LAST_MODE_STORAGE_KEY, mode)
+  }, [mode])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || isOnlineMode) return
+    const snapshot: StoredLocalGame = {
+      board,
+      currentDisk,
+      lastMove,
+      statusMessage,
+      timestamp: Date.now(),
+    }
+    window.localStorage.setItem(LOCAL_GAME_STORAGE_KEY, JSON.stringify(snapshot))
+  }, [board, currentDisk, lastMove, statusMessage, isOnlineMode])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !remoteState) return
+    const snapshot: StoredRemoteSnapshot = {
+      ...remoteState,
+      timestamp: Date.now(),
+    }
+    window.localStorage.setItem(REMOTE_STATE_STORAGE_KEY, JSON.stringify(snapshot))
+  }, [remoteState])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (!isOnlineMode) {
+      setTurnCountdownMs(null)
+      return
+    }
+    const deadline = remoteState?.turnDeadline ?? fallbackTurnDeadline
+    if (!deadline) {
+      setTurnCountdownMs(null)
+      return
+    }
+    const update = () => {
+      setTurnCountdownMs(Math.max(0, deadline - Date.now()))
+    }
+    update()
+    const timerId = window.setInterval(update, 1000)
+    return () => window.clearInterval(timerId)
+  }, [fallbackTurnDeadline, isOnlineMode, remoteState?.turnDeadline])
 
   return (
     <main className="app-shell">
@@ -587,6 +743,9 @@ function App() {
               <span>{turnChipText}</span>
               {turnChipNote && <span className="turn-chip-note">{turnChipNote}</span>}
             </p>
+            {isOnlineMode && turnCountdownLabel && (
+              <p className="turn-timer">タイムアウトまで {turnCountdownLabel}</p>
+            )}
           </div>
 
           <div className="scores">
@@ -647,9 +806,6 @@ function App() {
         </section>
       </div>
 
-      <p className="status-message" role="status">
-        {effectiveStatusMessage}
-      </p>
     </main>
   )
 }

@@ -26,6 +26,7 @@ export interface RemoteState {
   spectators: number
   statusMessage: string
   winner: Winner
+  turnDeadline: number | null
 }
 
 interface UseOnlineMatchOptions {
@@ -63,6 +64,12 @@ export interface UseOnlineMatchResult {
 
 export const DEFAULT_MATCH_SERVER_URL =
   import.meta.env.VITE_MATCH_SERVER_URL ?? 'ws://localhost:8787'
+const CLIENT_ID_STORAGE_KEY = 'othello:match-client-id'
+
+const readStoredClientId = () => {
+  if (typeof window === 'undefined') return null
+  return window.localStorage.getItem(CLIENT_ID_STORAGE_KEY)
+}
 
 const normalizeKey = (input: string) =>
   input
@@ -81,6 +88,7 @@ const buildWaitingState = (matchKey: string, message: string): RemoteState => {
     spectators: 0,
     statusMessage: message,
     winner: null,
+    turnDeadline: null,
   }
 }
 
@@ -93,6 +101,7 @@ const useOnlineMatch = ({
   const shouldReconnectRef = useRef(false)
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected')
+  const [clientId, setClientId] = useState<string | null>(() => readStoredClientId())
   const [matchState, setMatchState] = useState<RemoteState | null>(null)
   const [role, setRole] = useState<'player' | 'spectator' | null>(null)
   const [yourDisk, setYourDisk] = useState<Disk | null>(null)
@@ -100,6 +109,12 @@ const useOnlineMatch = ({
   const [waitingInfo, setWaitingInfo] = useState<WaitingInfo | null>(null)
   const [promptSpectateKey, setPromptSpectateKey] = useState<string | null>(null)
   const [lastError, setLastError] = useState<string | null>(null)
+  const persistClientId = useCallback((value: string) => {
+    setClientId(value)
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(CLIENT_ID_STORAGE_KEY, value)
+    }
+  }, [])
 
   const resetSession = useCallback(() => {
     setMatchState(null)
@@ -135,6 +150,9 @@ const useOnlineMatch = ({
       const payload = incoming.payload ?? {}
       switch (incoming.type) {
         case 'hello':
+          if (typeof payload.clientId === 'string') {
+            persistClientId(payload.clientId)
+          }
           setConnectionState('open')
           setLastError(null)
           break
@@ -192,7 +210,7 @@ const useOnlineMatch = ({
       console.warn('Failed to parse server message', error)
       setLastError('サーバー応答の解析に失敗しました。')
     }
-  }, [])
+  }, [persistClientId])
 
   const connectSocket = useCallback(() => {
     if (!enabled) return
@@ -206,7 +224,19 @@ const useOnlineMatch = ({
     setLastError(null)
 
     try {
-      const ws = new WebSocket(serverUrl)
+      let targetUrl = serverUrl
+      if (clientId) {
+        try {
+          const url = new URL(serverUrl)
+          url.searchParams.set('clientId', clientId)
+          targetUrl = url.toString()
+        } catch {
+          const separator = serverUrl.includes('?') ? '&' : '?'
+          targetUrl = `${serverUrl}${separator}clientId=${encodeURIComponent(clientId)}`
+        }
+      }
+
+      const ws = new WebSocket(targetUrl)
       socketRef.current = ws
 
       ws.onopen = () => {
@@ -235,7 +265,7 @@ const useOnlineMatch = ({
       setConnectionState('error')
       setLastError('サーバーに接続できませんでした。')
     }
-  }, [enabled, handleServerMessage, resetSession, serverUrl])
+  }, [clientId, enabled, handleServerMessage, resetSession, serverUrl])
 
   useEffect(() => {
     shouldReconnectRef.current = enabled

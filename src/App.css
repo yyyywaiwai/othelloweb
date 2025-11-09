@@ -105,6 +105,73 @@
   gap: 1rem;
 }
 
+.local-panel {
+  background: rgba(6, 24, 15, 0.92);
+  border: 1px solid rgba(122, 226, 184, 0.3);
+  border-radius: 1.25rem;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.local-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.cpu-status {
+  margin: 0;
+  font-weight: 600;
+  color: #cfe9db;
+}
+
+.cpu-status.active {
+  color: #ffd48f;
+}
+
+.local-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.control-select {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.65rem;
+  background: rgba(5, 20, 12, 0.8);
+  color: #f6fff5;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.95rem;
+}
+
+.local-toggle {
+  display: inline-flex;
+  border: 1px solid rgba(122, 226, 184, 0.4);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.local-toggle button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #c5efd9;
+  padding: 0.4rem 1.2rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.local-toggle button.active {
+  background: rgba(122, 226, 184, 0.2);
+  color: #042015;
+}
+
 .online-panel-body {
   display: flex;
   flex-direction: column;

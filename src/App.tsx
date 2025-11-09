@@ -2,6 +2,12 @@ import type { ChangeEvent, FormEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
+  chooseCpuMove,
+  CPU_DIFFICULTY_LABELS,
+  CPU_DIFFICULTY_PRESETS,
+  type CpuDifficulty,
+} from './lib/cpuPlayer'
+import {
   applyMove,
   computeValidMoves,
   countDisks,
@@ -33,10 +39,21 @@ interface InitialSnapshots {
   localGame: StoredLocalGame | null
   remoteState: StoredRemoteSnapshot | null
 }
+type LocalCpuSettings = {
+  humanDisk: Disk
+  difficulty: CpuDifficulty
+}
 
 const LOCAL_GAME_STORAGE_KEY = 'othello:local-game'
 const LAST_MODE_STORAGE_KEY = 'othello:last-mode'
 const REMOTE_STATE_STORAGE_KEY = 'othello:last-remote-state'
+const CPU_SETTINGS_STORAGE_KEY = 'othello:cpu-settings'
+const DEFAULT_CPU_SETTINGS: LocalCpuSettings = {
+  humanDisk: 'B',
+  difficulty: 'normal',
+}
+const CPU_DIFFICULTY_OPTIONS: CpuDifficulty[] = ['easy', 'normal', 'hard']
+const CPU_MOVE_DELAY_MS = 80
 
 const CONNECTION_LABEL: Record<'disconnected' | 'connecting' | 'open' | 'error', string> = {
   disconnected: '未接続',
@@ -119,6 +136,27 @@ const loadInitialSnapshots = (): InitialSnapshots => {
   return { mode, localGame, remoteState }
 }
 
+const parseCpuSettingsSnapshot = (raw: string | null): LocalCpuSettings => {
+  if (!raw) return DEFAULT_CPU_SETTINGS
+  try {
+    const data = JSON.parse(raw) as Partial<LocalCpuSettings>
+    const humanDisk: Disk = data?.humanDisk === 'W' ? 'W' : 'B'
+    const difficulty: CpuDifficulty = CPU_DIFFICULTY_OPTIONS.includes(
+      data?.difficulty as CpuDifficulty,
+    )
+      ? (data?.difficulty as CpuDifficulty)
+      : DEFAULT_CPU_SETTINGS.difficulty
+    return { humanDisk, difficulty }
+  } catch {
+    return DEFAULT_CPU_SETTINGS
+  }
+}
+
+const loadInitialCpuSettings = (): LocalCpuSettings => {
+  if (typeof window === 'undefined') return DEFAULT_CPU_SETTINGS
+  return parseCpuSettingsSnapshot(window.localStorage.getItem(CPU_SETTINGS_STORAGE_KEY))
+}
+
 const formatCountdown = (ms: number | null) => {
   if (ms === null) return null
   const totalSeconds = Math.max(0, Math.ceil(ms / 1000))
@@ -146,7 +184,18 @@ function App() {
     () => initialSnapshots?.localGame?.statusMessage ?? 'Black to move first.',
   )
   const [mode, setMode] = useState<GameMode>(initialSnapshots?.mode ?? 'local')
+  const initialCpuSettingsRef = useRef<LocalCpuSettings | null>(null)
+  if (initialCpuSettingsRef.current === null) {
+    initialCpuSettingsRef.current = loadInitialCpuSettings()
+  }
+  const initialCpuSettings = initialCpuSettingsRef.current as LocalCpuSettings
+  const [cpuSettings, setCpuSettings] = useState<LocalCpuSettings>(initialCpuSettings)
+  const [cpuThinking, setCpuThinking] = useState(false)
+  const humanDisk = cpuSettings.humanDisk
+  const cpuDisk = nextDisk(humanDisk)
+  const cpuDifficulty = cpuSettings.difficulty
   const isOnlineMode = mode === 'online'
+  const isLocalMode = mode === 'local'
   const [matchKeyInput, setMatchKeyInput] = useState('')
   const [serverUrl, setServerUrl] = useState(DEFAULT_MATCH_SERVER_URL)
   const [serverUrlInput, setServerUrlInput] = useState(DEFAULT_MATCH_SERVER_URL)
@@ -216,19 +265,38 @@ function App() {
       return `${DISK_LABEL[currentDisk]} cannot move and must pass.`
     }
 
+    if (isLocalMode) {
+      if (currentDisk === humanDisk) {
+        return `あなた (${DISK_LABEL[humanDisk]}) の番です。${validMoves.size}手の候補があります。`
+      }
+      if (currentDisk === cpuDisk) {
+        return `CPU (${DISK_LABEL[cpuDisk]}) が思考中…`
+      }
+    }
+
     const moveWord = validMoves.size === 1 ? 'move' : 'moves'
     return `${validMoves.size} ${moveWord} available for ${DISK_LABEL[currentDisk]}.`
-  }, [currentDisk, isGameOver, scores, validMoves])
+  }, [cpuDisk, currentDisk, humanDisk, isGameOver, isLocalMode, scores, validMoves])
 
-  const resetGame = useCallback(() => {
-    setBoard(createInitialBoard())
-    setCurrentDisk('B')
-    setLastMove(null)
-    setStatusMessage('New game started. Black to move.')
-  }, [])
+  const resetGame = useCallback(
+    (options?: { humanDisk?: Disk }) => {
+      const nextHumanDisk = options?.humanDisk ?? humanDisk
+      setBoard(createInitialBoard())
+      setCurrentDisk('B')
+      setLastMove(null)
+      setStatusMessage(
+        nextHumanDisk === 'B'
+          ? 'New game started. You (Black) move first.'
+          : 'New game started. CPU (Black) moves first.',
+      )
+      setCpuThinking(false)
+    },
+    [humanDisk],
+  )
 
   const handleLocalCellClick = useCallback(
     (index: number) => {
+      if (currentDisk !== humanDisk) return
       const flips = validMoves.get(index)
       if (!flips || isGameOver) return
 
@@ -236,8 +304,56 @@ function App() {
       setCurrentDisk((prev) => nextDisk(prev))
       setLastMove(index)
     },
-    [currentDisk, isGameOver, validMoves],
+    [currentDisk, humanDisk, isGameOver, validMoves],
   )
+
+  useEffect(() => {
+    if (!isLocalMode) {
+      setCpuThinking(false)
+      return
+    }
+    if (currentDisk !== cpuDisk || isGameOver || validMoves.size === 0) {
+      setCpuThinking(false)
+      return
+    }
+    if (typeof window === 'undefined') return
+
+    let cancelled = false
+    setCpuThinking(true)
+
+    const timerId = window.setTimeout(() => {
+      const result = chooseCpuMove(board, cpuDisk, { difficulty: cpuDifficulty })
+      if (cancelled) return
+      if (result.move === null) {
+        setCpuThinking(false)
+        return
+      }
+      const flips = validMoves.get(result.move)
+      if (!flips) {
+        setCpuThinking(false)
+        return
+      }
+
+      const nextBoard = applyMove(board, result.move, cpuDisk, flips)
+      setBoard(nextBoard)
+      setCurrentDisk(nextDisk(cpuDisk))
+      setLastMove(result.move)
+      setCpuThinking(false)
+    }, CPU_MOVE_DELAY_MS)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timerId)
+    }
+  }, [
+    board,
+    cpuDifficulty,
+    cpuDisk,
+    currentDisk,
+    isGameOver,
+    isLocalMode,
+    validMoves,
+  ])
 
   useEffect(() => {
     if (isGameOver) {
@@ -370,6 +486,18 @@ function App() {
     setMode(next)
   }
 
+  const handleCpuDifficultyChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const nextDifficulty = event.target.value as CpuDifficulty
+    if (!CPU_DIFFICULTY_OPTIONS.includes(nextDifficulty)) return
+    setCpuSettings((prev) => ({ ...prev, difficulty: nextDifficulty }))
+  }
+
+  const handleHumanDiskChange = (nextValue: Disk) => {
+    if (nextValue === humanDisk) return
+    setCpuSettings((prev) => ({ ...prev, humanDisk: nextValue }))
+    resetGame({ humanDisk: nextValue })
+  }
+
   const handleKeyInputChange = (event: ChangeEvent<HTMLInputElement>) => {
     const raw = event.target.value.toUpperCase()
     setMatchKeyInput(raw.replace(/[^A-Z0-9]/g, ''))
@@ -481,6 +609,11 @@ function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
+    window.localStorage.setItem(CPU_SETTINGS_STORAGE_KEY, JSON.stringify(cpuSettings))
+  }, [cpuSettings])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
     window.localStorage.setItem(LAST_MODE_STORAGE_KEY, mode)
   }, [mode])
 
@@ -569,6 +702,63 @@ function App() {
           )}
         </div>
       </header>
+
+      {isLocalMode && (
+        <section className="local-panel" aria-label="CPU 対戦設定">
+          <div className="local-panel-head">
+            <p className="label">CPU対戦設定</p>
+            <p className={`cpu-status ${cpuThinking ? 'active' : ''}`} aria-live="polite">
+              {cpuThinking ? 'CPUが思考中…' : 'あなたの入力待ち'}
+            </p>
+          </div>
+
+          <div className="local-settings-grid">
+            <div>
+              <label className="label" htmlFor="cpu-difficulty-select">
+                難易度
+              </label>
+              <select
+                id="cpu-difficulty-select"
+                className="control-select"
+                value={cpuDifficulty}
+                onChange={handleCpuDifficultyChange}
+              >
+                {CPU_DIFFICULTY_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {CPU_DIFFICULTY_LABELS[option]}
+                  </option>
+                ))}
+              </select>
+              <p className="helper-text">
+                探索深さ: {CPU_DIFFICULTY_PRESETS[cpuDifficulty].maxDepth}
+              </p>
+            </div>
+
+            <div>
+              <p className="label">あなたの石</p>
+              <div className="local-toggle" role="group" aria-label="あなたの石">
+                <button
+                  type="button"
+                  className={humanDisk === 'B' ? 'active' : ''}
+                  onClick={() => handleHumanDiskChange('B')}
+                >
+                  黒 (先手)
+                </button>
+                <button
+                  type="button"
+                  className={humanDisk === 'W' ? 'active' : ''}
+                  onClick={() => handleHumanDiskChange('W')}
+                >
+                  白 (後手)
+                </button>
+              </div>
+              <p className="helper-text">
+                {humanDisk === 'B' ? 'あなたが先手です。' : 'CPU が先手です。'}
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
 
       {isOnlineMode && (
         <section className={`online-panel ${onlinePanelCollapsed ? 'collapsed' : ''}`}>
@@ -816,7 +1006,8 @@ function App() {
                 effectiveGameOver ||
                 Boolean(cell) ||
                 !isValid ||
-                (isOnlineMode && (!remoteState || !canPlayOnline))
+                (isOnlineMode && (!remoteState || !canPlayOnline)) ||
+                (isLocalMode && effectiveCurrentDisk === cpuDisk)
 
               return (
                 <button

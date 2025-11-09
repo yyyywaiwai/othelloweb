@@ -12,18 +12,20 @@ type DifficultyConfig = {
   maxDepth: number
 }
 
-export type CpuDifficulty = 'easy' | 'normal' | 'hard'
+export type CpuDifficulty = 'easy' | 'normal' | 'hard' | 'saikyo'
 
 export const CPU_DIFFICULTY_LABELS: Record<CpuDifficulty, string> = {
   easy: 'やさしい',
   normal: 'ふつう',
   hard: 'つよい',
+  saikyo: 'さいきょう',
 }
 
 export const CPU_DIFFICULTY_PRESETS: Record<CpuDifficulty, DifficultyConfig> = {
   easy: { maxDepth: 2 },
   normal: { maxDepth: 4 },
   hard: { maxDepth: 5 },
+  saikyo: { maxDepth: 6 },
 }
 
 const DIFFICULTY_CONFIG = CPU_DIFFICULTY_PRESETS

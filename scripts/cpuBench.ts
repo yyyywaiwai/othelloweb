@@ -1,4 +1,4 @@
-import { chooseCpuMove, type CpuDifficulty } from '../src/lib/cpuPlayer'
+import { chooseCpuMove, CPU_DIFFICULTY_LABELS, type CpuDifficulty } from '../src/lib/cpuPlayer'
 import {
   applyMove,
   computeValidMoves,
@@ -80,18 +80,30 @@ const aggregate = (games: number, black: CpuDifficulty, white: CpuDifficulty) =>
 
 const GAMES = Number(process.env.CPU_BENCH_GAMES ?? 12)
 
+const ORDERED_DIFFICULTIES: CpuDifficulty[] = ['easy', 'normal', 'hard', 'saikyo']
+
 const scenarios: Array<[
   string,
   CpuDifficulty,
   CpuDifficulty,
-]> = [
-  ['Easy vs Normal', 'easy', 'normal'],
-  ['Normal vs Easy', 'normal', 'easy'],
-  ['Normal vs Hard', 'normal', 'hard'],
-  ['Hard vs Normal', 'hard', 'normal'],
-  ['Easy vs Hard', 'easy', 'hard'],
-  ['Hard vs Easy', 'hard', 'easy'],
-]
+]> = []
+
+for (let i = 0; i < ORDERED_DIFFICULTIES.length; i += 1) {
+  for (let j = i + 1; j < ORDERED_DIFFICULTIES.length; j += 1) {
+    const a = ORDERED_DIFFICULTIES[i]
+    const b = ORDERED_DIFFICULTIES[j]
+    scenarios.push([
+      `${CPU_DIFFICULTY_LABELS[a]} vs ${CPU_DIFFICULTY_LABELS[b]}`,
+      a,
+      b,
+    ])
+    scenarios.push([
+      `${CPU_DIFFICULTY_LABELS[b]} vs ${CPU_DIFFICULTY_LABELS[a]}`,
+      b,
+      a,
+    ])
+  }
+}
 
 for (const [label, black, white] of scenarios) {
   const tally = aggregate(GAMES, black, white)

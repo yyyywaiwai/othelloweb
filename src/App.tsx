@@ -52,7 +52,7 @@ const DEFAULT_CPU_SETTINGS: LocalCpuSettings = {
   humanDisk: 'B',
   difficulty: 'normal',
 }
-const CPU_DIFFICULTY_OPTIONS: CpuDifficulty[] = ['easy', 'normal', 'hard']
+const CPU_DIFFICULTY_OPTIONS: CpuDifficulty[] = ['easy', 'normal', 'hard', 'saikyo']
 const CPU_MOVE_DELAY_MS = 80
 
 const CONNECTION_LABEL: Record<'disconnected' | 'connecting' | 'open' | 'error', string> = {

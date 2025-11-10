@@ -10,6 +10,7 @@ import {
 
 type DifficultyConfig = {
   maxDepth: number
+  evaluationNoise?: number
 }
 
 export type CpuDifficulty = 'easy' | 'normal' | 'hard' | 'saikyo'
@@ -22,7 +23,7 @@ export const CPU_DIFFICULTY_LABELS: Record<CpuDifficulty, string> = {
 }
 
 export const CPU_DIFFICULTY_PRESETS: Record<CpuDifficulty, DifficultyConfig> = {
-  easy: { maxDepth: 2 },
+  easy: { maxDepth: 1, evaluationNoise: 35 },
   normal: { maxDepth: 4 },
   hard: { maxDepth: 5 },
   saikyo: { maxDepth: 6 },
@@ -99,8 +100,19 @@ export const chooseCpuMove = (
   }
 }
 
+const applyEvaluationNoise = (value: number, magnitude: number) => {
+  const noise = (Math.random() * 2 - 1) * magnitude
+  return value + noise
+}
+
+const hasEmptyCell = (board: Cell[]) => board.some((cell) => cell === null)
+
 const evaluatePerspective = (board: Cell[], disk: Disk, context: SearchContext) => {
-  const raw = evaluateBoard(board, context.maximizingDisk)
+  let raw = evaluateBoard(board, context.maximizingDisk)
+  const noise = context.config.evaluationNoise
+  if (noise && noise > 0 && hasEmptyCell(board)) {
+    raw = applyEvaluationNoise(raw, noise)
+  }
   return disk === context.maximizingDisk ? raw : -raw
 }
 
